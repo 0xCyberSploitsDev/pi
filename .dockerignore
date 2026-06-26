@@ -1,0 +1,29 @@
+# Dependencies (reinstalled inside the image)
+**/node_modules
+
+# Build outputs (rebuilt inside the image)
+**/dist
+packages/web-ui/dist
+
+# Local runtime / data
+workspace
+state
+*.log
+
+# VCS and tooling
+.git
+.github
+.husky
+.vscode
+.idea
+
+# Docker / compose artifacts
+Dockerfile
+.dockerignore
+docker-compose.yml
+.env
+
+# Misc
+**/.DS_Store
+**/*.tsbuildinfo
+.kilo

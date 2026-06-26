@@ -31,8 +31,36 @@ To learn more about Pi:
 | **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
 | **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
+| **[@earendil-works/pi-server](packages/server)** | Hono HTTP/WebSocket API server for the cloud coding agent |
+| **[@earendil-works/pi-web-ui](packages/web-ui)** | Web dashboard and chat UI (React + Vite + Tailwind) |
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
+
+## Cloud Coding Agent
+
+<p align="center">
+  <img alt="pi Cloud dashboard" src="packages/web-ui/docs/dashboard-screenshot.png" width="600">
+</p>
+
+The cloud coding agent server (`packages/server/`) exposes the pi agent SDK through a Hono HTTP/WS API, paired with a React + Vite + Tailwind dashboard (`packages/web-ui/`). The server supports:
+
+- **Real-time chat** via WebSocket — prompts stream agent events (text, tool calls, results) as they happen
+- **Async missions** — submit prompts to a queue, poll or get notified when they complete
+- **Session management** — create, list, delete, and fork agent sessions
+- **Model discovery** — browse available providers/models via the REST API
+- **Persistence** — PostgreSQL-backed session metadata and mission queue
+
+### Quick start
+
+```bash
+# Start both server and web UI in development mode
+npm run dev
+
+# Or build and run with Docker
+docker compose up
+```
+
+See [packages/server/README.md](packages/server/README.md) for server configuration and [packages/web-ui/](packages/web-ui/) for frontend details.
 
 ## Permissions & Containerization
 
