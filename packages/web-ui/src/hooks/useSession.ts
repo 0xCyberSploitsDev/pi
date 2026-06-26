@@ -8,6 +8,8 @@ export interface UseSessionResult {
 	messages: AgentMessage[];
 	/** The assistant message currently streaming, if any. */
 	streaming: AgentMessage | undefined;
+	/** Latest streamed tool execution details, keyed by tool call id. */
+	toolProgress: Record<string, unknown>;
 	error: string | undefined;
 	sendPrompt: (text: string) => void;
 	abort: () => void;
@@ -30,6 +32,7 @@ export function useSession(sessionId: string | undefined): UseSessionResult {
 	const [state, setState] = useState<SessionStateSnapshot | undefined>(undefined);
 	const [messages, setMessages] = useState<AgentMessage[]>([]);
 	const [streaming, setStreaming] = useState<AgentMessage | undefined>(undefined);
+	const [toolProgress, setToolProgress] = useState<Record<string, unknown>>({});
 	const [error, setError] = useState<string | undefined>(undefined);
 
 	const handleMessage = useCallback((message: WsServerMessage) => {
@@ -56,6 +59,22 @@ export function useSession(sessionId: string | undefined): UseSessionResult {
 					case "message_end":
 						setStreaming(undefined);
 						break;
+					case "tool_execution_update": {
+						const id = event.toolCallId as string | undefined;
+						const partial = event.partialResult as { details?: unknown } | undefined;
+						if (id && partial?.details !== undefined) {
+							setToolProgress((prev) => ({ ...prev, [id]: partial.details }));
+						}
+						break;
+					}
+					case "tool_execution_end": {
+						const id = event.toolCallId as string | undefined;
+						const result = event.result as { details?: unknown } | undefined;
+						if (id && result?.details !== undefined) {
+							setToolProgress((prev) => ({ ...prev, [id]: result.details }));
+						}
+						break;
+					}
 					case "turn_end": {
 						const msg = event.message as AgentMessage | undefined;
 						const toolResults = (event.toolResults as AgentMessage[] | undefined) ?? [];
@@ -80,6 +99,7 @@ export function useSession(sessionId: string | undefined): UseSessionResult {
 		if (!sessionId) return;
 		setMessages([]);
 		setStreaming(undefined);
+		setToolProgress({});
 		setError(undefined);
 		const socket = new SessionSocket(sessionId, {
 			onMessage: handleMessage,
@@ -104,5 +124,5 @@ export function useSession(sessionId: string | undefined): UseSessionResult {
 		[],
 	);
 
-	return { status, state, messages, streaming, error, sendPrompt, abort, setModel, setThinking };
+	return { status, state, messages, streaming, toolProgress, error, sendPrompt, abort, setModel, setThinking };
 }

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
+import { clampThinkingLevel, type Message, type Model } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -11,11 +11,12 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
-import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+import { createModelStreamFn } from "./model-stream.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
+import { createSpawnAgentsToolDefinition, createSpawnWorkersToolDefinition } from "./sub-agents/index.ts";
 import { time } from "./timings.ts";
 import {
 	createBashTool,
@@ -69,6 +70,26 @@ export interface CreateAgentSessionOptions {
 	excludeTools?: string[];
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
+
+	/**
+	 * Enable the built-in `spawn_agents` tool for parallel sub-agent delegation.
+	 *
+	 * When enabled (the default), the agent can delegate independent sub-tasks to
+	 * read-only sub-agents that run concurrently in this process. Sub-agents never
+	 * receive `spawn_agents` themselves, so delegation cannot recurse.
+	 */
+	enableSubAgents?: boolean;
+
+	/**
+	 * Enable the built-in `spawn_workers` tool for parallel writable delegation.
+	 *
+	 * When enabled (the default), the agent can delegate independent implementation
+	 * tasks to writable workers that each run in an isolated git worktree, with an
+	 * optional reviewer that cross-validates their diffs. Workers receive a
+	 * read-only `spawn_agents` but never `spawn_workers`, so delegation cannot
+	 * recurse into more writable workers. Requires a git repository at runtime.
+	 */
+	enableWorkers?: boolean;
 
 	/** Resource loader. When omitted, DefaultResourceLoader is used. */
 	resourceLoader?: ResourceLoader;
@@ -298,37 +319,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
-		streamFn: async (model, context, options) => {
-			const auth = await modelRegistry.getApiKeyAndHeaders(model);
-			if (!auth.ok) {
-				throw new Error(auth.error);
-			}
-			const env = auth.env || options?.env ? { ...(auth.env ?? {}), ...(options?.env ?? {}) } : undefined;
-			const providerRetrySettings = settingsManager.getProviderRetrySettings();
-			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
-			// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
-			// Use max int32 to effectively disable the timeout.
-			const effectiveTimeoutMs = httpIdleTimeoutMs === 0 ? 2147483647 : httpIdleTimeoutMs;
-			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs;
-			const websocketConnectTimeoutMs =
-				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
-			return streamSimple(model, context, {
-				...options,
-				apiKey: auth.apiKey,
-				env,
-				timeoutMs,
-				websocketConnectTimeoutMs,
-				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
-				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
-				headers: mergeProviderAttributionHeaders(
-					model,
-					settingsManager,
-					options?.sessionId,
-					auth.headers,
-					options?.headers,
-				),
-			});
-		},
+		streamFn: createModelStreamFn(modelRegistry, settingsManager),
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;
 			if (!runner?.hasHandlers("before_provider_request")) {
@@ -374,6 +365,50 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager.appendThinkingLevelChange(thinkingLevel);
 	}
 
+	const enableSubAgents = options.enableSubAgents ?? true;
+	const spawnAgentsTool = enableSubAgents
+		? createSpawnAgentsToolDefinition({
+				cwd,
+				modelRegistry,
+				settingsManager,
+				getModel: () => agent.state.model,
+				getThinkingLevel: () => agent.state.thinkingLevel,
+				getSessionId: () => sessionManager.getSessionId(),
+				getSessionFile: () => sessionManager.getSessionFile(),
+				getSessionDir: () => sessionManager.getSessionDir(),
+			})
+		: undefined;
+
+	const enableWorkers = options.enableWorkers ?? true;
+	const spawnWorkersTool = enableWorkers
+		? createSpawnWorkersToolDefinition({
+				cwd,
+				modelRegistry,
+				settingsManager,
+				worktreesDir: join(agentDir, "worktrees"),
+				getModel: () => agent.state.model,
+				getThinkingLevel: () => agent.state.thinkingLevel,
+				getSessionId: () => sessionManager.getSessionId(),
+				getSessionFile: () => sessionManager.getSessionFile(),
+				getSessionDir: () => sessionManager.getSessionDir(),
+			})
+		: undefined;
+
+	const builtinDelegationTools = [spawnAgentsTool, spawnWorkersTool].filter(
+		(tool): tool is NonNullable<typeof tool> => tool !== undefined,
+	);
+	const customTools =
+		builtinDelegationTools.length > 0
+			? [...(options.customTools ?? []), ...builtinDelegationTools]
+			: options.customTools;
+
+	// Activate delegation tools by default unless an explicit allowlist omits them.
+	for (const tool of builtinDelegationTools) {
+		if (!allowedToolNames && !excludedToolNameSet?.has(tool.name)) {
+			initialActiveToolNames.push(tool.name);
+		}
+	}
+
 	const session = new AgentSession({
 		agent,
 		sessionManager,
@@ -381,7 +416,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		cwd,
 		scopedModels: options.scopedModels,
 		resourceLoader,
-		customTools: options.customTools,
+		customTools,
 		modelRegistry,
 		initialActiveToolNames,
 		allowedToolNames,

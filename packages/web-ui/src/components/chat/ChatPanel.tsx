@@ -3,10 +3,12 @@ import type { UseSessionResult } from "../../hooks/useSession.ts";
 import { buildTranscript } from "../../lib/transcript.ts";
 import { SendIcon, SpinnerIcon, StopIcon } from "../icons.tsx";
 import { AssistantBubble, UserBubble } from "./MessageBubble.tsx";
+import { isSubAgentDetails, SubAgentsCard } from "./SubAgentsCard.tsx";
 import { ToolCallCard } from "./ToolCallCard.tsx";
+import { isWorkersDetails, WorkersCard } from "./WorkersCard.tsx";
 
 export function ChatPanel({ session }: { session: UseSessionResult }) {
-	const { messages, streaming, state, error, sendPrompt, abort } = session;
+	const { messages, streaming, state, error, sendPrompt, abort, toolProgress } = session;
 	const [input, setInput] = useState("");
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const transcript = buildTranscript(messages, streaming);
@@ -16,7 +18,7 @@ export function ChatPanel({ session }: { session: UseSessionResult }) {
 	useEffect(() => {
 		const el = scrollRef.current;
 		if (el) el.scrollTop = el.scrollHeight;
-	}, [transcript.length, streaming]);
+	}, [transcript.length, streaming, toolProgress]);
 
 	const submit = () => {
 		const text = input.trim();
@@ -46,6 +48,23 @@ export function ChatPanel({ session }: { session: UseSessionResult }) {
 				{transcript.map((item, i) => {
 					if (item.kind === "user") return <UserBubble key={`u-${i}`} item={item} />;
 					if (item.kind === "assistant") return <AssistantBubble key={`a-${i}`} item={item} />;
+					if (item.call.name === "spawn_agents") {
+						// Prefer live progress while running; fall back to the final result details.
+						const live = toolProgress[item.call.id];
+						const finalDetails = item.result?.details;
+						const details = isSubAgentDetails(live) ? live : finalDetails;
+						if (isSubAgentDetails(details)) {
+							return <SubAgentsCard key={`t-${item.call.id}`} details={details} />;
+						}
+					}
+					if (item.call.name === "spawn_workers") {
+						const live = toolProgress[item.call.id];
+						const finalDetails = item.result?.details;
+						const details = isWorkersDetails(live) ? live : finalDetails;
+						if (isWorkersDetails(details)) {
+							return <WorkersCard key={`t-${item.call.id}`} details={details} />;
+						}
+					}
 					return <ToolCallCard key={`t-${item.call.id}`} item={item} />;
 				})}
 				{isStreaming && !streaming && (

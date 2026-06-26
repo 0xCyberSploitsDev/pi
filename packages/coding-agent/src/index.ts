@@ -246,6 +246,37 @@ export {
 	type SkillFrontmatter,
 } from "./core/skills.ts";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
+// Multi-agent sub-agent delegation
+export {
+	type CreateWorktreeOptions,
+	createSpawnAgentsToolDefinition,
+	createSpawnWorkersToolDefinition,
+	createWorktree,
+	getSubAgentSessionDir,
+	getWorktreeChangedFiles,
+	getWorktreeDiff,
+	isGitRepo,
+	type PersistSubAgentOptions,
+	persistSubAgentTranscript,
+	type RunSubAgentsOptions,
+	removeWorktree,
+	resolveModelRef,
+	runSubAgents,
+	type SpawnAgentsInput,
+	type SpawnAgentsToolDetails,
+	type SpawnAgentsToolOptions,
+	type SpawnWorkersInput,
+	type SpawnWorkersToolDetails,
+	type SpawnWorkersToolOptions,
+	type SubAgentProgress,
+	type SubAgentResult,
+	type SubAgentStatus,
+	type SubAgentTask,
+	type SubAgentTranscriptHook,
+	sanitizeBranchName,
+	type WorkerResult,
+	type Worktree,
+} from "./core/sub-agents/index.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
 // Tools
 export {
